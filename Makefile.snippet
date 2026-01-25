@@ -1,0 +1,16 @@
+# === Option B (blind human-verified evaluation) ===
+
+infer-blind-adapter:
+	python -m src.pathology_poc.infer_blind 	  --input_dir blind_eval/images 	  --output_csv blind_eval/predictions/preds_adapter.csv 	  --checkpoint models/checkpoints/adapter_neutrophil_rbc.pth 	  --class_names neutrophil rbc 	  --img_size 518 	  --use_adapter
+
+infer-blind-linear:
+	python -m src.pathology_poc.infer_blind 	  --input_dir blind_eval/images 	  --output_csv blind_eval/predictions/preds_linear.csv 	  --checkpoint models/checkpoints/baseline_neutrophil_rbc.pth 	  --class_names neutrophil rbc 	  --img_size 518
+
+score-blind-adapter:
+	python -m src.pathology_poc.score_blind 	  --pred_csv blind_eval/predictions/preds_adapter.csv 	  --class_names neutrophil rbc 	  --threshold 0.80
+
+score-blind-linear:
+	python -m src.pathology_poc.score_blind 	  --pred_csv blind_eval/predictions/preds_linear.csv 	  --class_names neutrophil rbc 	  --threshold 0.80
+
+data-qa:
+	python -m src.pathology_poc.tools.data_qa --data_root dataset

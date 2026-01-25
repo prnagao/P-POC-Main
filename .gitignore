@@ -1,0 +1,20 @@
+# Ignore image files under dataset/ and 100x FOV/ (recursively)
+dataset/**/*.jpg
+dataset/**/*.jpeg
+dataset/**/*.png
+dataset/**/*.tif
+dataset/**/*.tiff
+
+100x FOV/**/*.jpg
+100x FOV/**/*.jpeg
+100x FOV/**/*.png
+100x FOV/**/*.tif
+100x FOV/**/*.tiff
+
+# (Optional) other big artifacts
+dataset/**/*.npy
+dataset/**/*.pt
+dataset/**/*.pth
+100x FOV/**/*.npy
+100x FOV/**/*.pt
+100x FOV/**/*.pth

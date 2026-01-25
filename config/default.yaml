@@ -1,0 +1,53 @@
+# config/default.yaml
+
+project_name: pathology_poc
+
+data:
+  # Root folder that contains per-slide folders (e.g., dataset/slide_S1/positive/*.png)
+  root: dataset
+  img_size: 518
+
+  # These must match the class folder names under each slide folder.
+  class_names: ["positive", "negative"]
+
+  # Used to decide which class gets written to predicted_probability and for precision/recall/F1.
+  positive_class: positive
+
+  # Slide-level splits (folder names under `data.root`)
+  splits:
+    # ORIGINAL (before swap):
+    # train: ["slide_S1", "slide_S3"]
+    # test:  ["slide_S2", "slide_S4"]
+
+    # SWAP (train on previous test slides):
+    train: ["slide_s5"]
+    val: ["slide_s1"]
+    test: ["slide_s2"]
+    hard_negative: []
+
+train:
+  seed: 42
+  epochs: 5
+  batch_size: 16
+  num_workers: 4
+  lr: 0.001
+  weight_decay: 0.0001
+
+model:
+  # "linear"  = frozen DINOv2 + linear head
+  # "adapter" = frozen DINOv2 + small adapter + linear head
+  mode: adapter
+
+  backbone: vit_small_patch14_dinov2.lvd142m
+  use_hub: false
+  hub_name: dinov2_vits14
+  use_registers: false
+
+  # Adapter-only settings (ignored when mode: linear)
+  adapter_hidden_ratio: 0.25
+  adapter_dropout: 0.1
+  adapter_use_layernorm: true
+
+output:
+  checkpoint_dir: outputs/checkpoints
+  inference_csv: outputs/predictions.csv

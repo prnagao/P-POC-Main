@@ -1,0 +1,9 @@
+torch>=2.2.0
+torchvision>=0.17.0
+timm>=0.9.12
+numpy>=1.26
+Pillow>=10.0
+PyYAML>=6.0
+tqdm>=4.66
+rich>=13.7
+watchdog>=4.0
