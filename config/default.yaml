@@ -13,6 +13,10 @@ data:
   # Used to decide which class gets written to predicted_probability and for precision/recall/F1.
   positive_class: positive
 
+  # Train-time augmentation (rotation, flips, color jitter). Set false for no-aug ablations.
+  # Val/test always use deterministic resize+normalize regardless of this flag.
+  augment: true
+
   # Slide-level splits (folder names under `data.root`)
   splits:
     # ORIGINAL (before swap):
@@ -27,11 +31,17 @@ data:
 
 train:
   seed: 42
-  epochs: 5
+  epochs: 10
   batch_size: 16
   num_workers: 4
   lr: 0.001
   weight_decay: 0.0001
+  # Stop training if the early-stopping metric has not improved for this many
+  # consecutive epochs. Set to 0 to disable and train for the full `epochs`.
+  early_stopping_patience: 3
+  # Which val metric drives best-checkpoint and early-stopping. Options:
+  # f1 (default), accuracy, precision, recall.
+  early_stopping_metric: f1
 
 model:
   # "linear"  = frozen DINOv2 + linear head

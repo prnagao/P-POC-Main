@@ -4,6 +4,8 @@ dataset/**/*.jpeg
 dataset/**/*.png
 dataset/**/*.tif
 dataset/**/*.tiff
+dataset/**/*.bmp
+dataset/**/*.webp
 
 100x FOV/**/*.jpg
 100x FOV/**/*.jpeg
@@ -18,3 +20,22 @@ dataset/**/*.pth
 100x FOV/**/*.npy
 100x FOV/**/*.pt
 100x FOV/**/*.pth
+
+# Surplus crops produced by balance_slides.py
+dataset_unused/
+
+# Per-run LOPO outputs (predictions, checkpoints, fold configs).
+# Transferred separately, not committed to git.
+outputs/lopo/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Claude Code local state (worktrees, session data)
+.claude/

@@ -95,14 +95,14 @@ def save_checkpoint(model: torch.nn.Module, class_names: List[str], cfg: Dict, s
     return ckpt_path
 
 
-def train(args):
-    cfg = load_config(args.config)
+def train_run(cfg: Dict) -> Optional[str]:
+    """Train using an in-memory config dict. Returns the best checkpoint path."""
     seed_everything(cfg["train"]["seed"])
 
     loaders, class_names = build_dataloaders_from_config(cfg, splits=["train", "val"])
     if "train" not in loaders:
         rprint("[red]No training data found for the requested slide splits.[/red]")
-        return
+        return None
 
     mode = get_model_mode(cfg)
     rprint(f"[bold]Model mode:[/bold] {mode}")
@@ -115,18 +115,26 @@ def train(args):
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     if not trainable_params:
         rprint("[red]No trainable parameters found. Did you accidentally freeze everything?[/red]")
-        return
+        return None
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(trainable_params, lr=cfg["train"]["lr"], weight_decay=cfg["train"]["weight_decay"])
     scaler = GradScaler(enabled=device() == "cuda")
 
-    best_val_acc = -1.0
-    best_ckpt_path: Optional[str] = None
+    # Early stopping config. patience=0 disables (equivalent to old behavior).
+    train_cfg = cfg["train"]
+    patience = int(train_cfg.get("early_stopping_patience", 0))
+    es_metric = str(train_cfg.get("early_stopping_metric", "val_f1")).lower()
+    positive_idx = resolve_positive_class_index(class_names, cfg)
 
-    for epoch in range(cfg["train"]["epochs"]):
+    best_metric = -1.0
+    best_val_acc = -1.0  # tracked for the end-of-run log line
+    best_ckpt_path: Optional[str] = None
+    epochs_since_best = 0
+
+    for epoch in range(train_cfg["epochs"]):
         model.train()
-        pbar = tqdm(loaders["train"], desc=f"Epoch {epoch + 1}/{cfg['train']['epochs']}")
+        pbar = tqdm(loaders["train"], desc=f"Epoch {epoch + 1}/{train_cfg['epochs']}")
         for imgs, labels, _ in pbar:
             imgs = imgs.to(device(), non_blocking=True)
             labels = labels.to(device(), non_blocking=True)
@@ -143,35 +151,76 @@ def train(args):
             # Avoid PyTorch warning about converting tensors that require grad to python scalars.
             pbar.set_postfix(loss=loss.detach().item())
 
-        # validation accuracy
+        # Validation pass: compute accuracy + F1, decide whether this epoch is "best"
+        # under the configured early-stopping metric, and (if patience exhausted) break.
         if "val" in loaders:
-            model.eval()
-            correct = total_samples = 0
-            with torch.no_grad():
-                for imgs, labels, _ in loaders["val"]:
-                    imgs = imgs.to(device(), non_blocking=True)
-                    labels = labels.to(device(), non_blocking=True)
-                    logits = model(imgs)
-                    preds = logits.argmax(dim=1)
-                    correct += (preds == labels).sum().item()
-                    total_samples += labels.numel()
+            val_metrics = _val_pass(model, loaders["val"], positive_idx)
+            rprint(
+                f"[cyan]Val[/cyan] acc={val_metrics['accuracy']:.3f} "
+                f"precision={val_metrics['precision']:.3f} "
+                f"recall={val_metrics['recall']:.3f} "
+                f"f1={val_metrics['f1']:.3f}"
+            )
 
-            val_acc = correct / total_samples if total_samples else 0.0
-            rprint(f"[cyan]Val accuracy:[/cyan] {val_acc:.3f}")
+            current = val_metrics.get(es_metric.replace("val_", ""), val_metrics["f1"])
+            best_val_acc = max(best_val_acc, val_metrics["accuracy"])
 
-            if val_acc >= best_val_acc:
-                best_val_acc = val_acc
+            if current > best_metric:
+                best_metric = current
+                epochs_since_best = 0
                 best_ckpt_path = save_checkpoint(model, class_names, cfg, cfg["output"]["checkpoint_dir"])
-                rprint(f"[green]Saved checkpoint:[/green] {best_ckpt_path}")
+                rprint(f"[green]Saved checkpoint (best {es_metric}={current:.3f}):[/green] {best_ckpt_path}")
+            else:
+                epochs_since_best += 1
+                if patience > 0 and epochs_since_best >= patience:
+                    rprint(
+                        f"[yellow]Early stopping at epoch {epoch + 1}: "
+                        f"{es_metric} did not improve for {patience} epoch(s). "
+                        f"Best {es_metric}={best_metric:.3f}.[/yellow]"
+                    )
+                    break
 
     # If there's no val split, still save something useful.
     if "val" not in loaders:
         best_ckpt_path = save_checkpoint(model, class_names, cfg, cfg["output"]["checkpoint_dir"])
         rprint(f"[green]Saved checkpoint (no val split):[/green] {best_ckpt_path}")
 
-    rprint(f"[bold]Training finished. Best val accuracy:[/bold] {max(best_val_acc, 0.0):.3f}")
+    rprint(f"[bold]Training finished. Best {es_metric}:[/bold] {max(best_metric, 0.0):.3f} "
+           f"(val accuracy at best epoch tracked separately)")
     if best_ckpt_path:
         rprint(f"[bold]Best checkpoint:[/bold] {best_ckpt_path}")
+    return best_ckpt_path
+
+
+def _val_pass(model, loader, positive_idx):
+    """One pass over a val/test loader. Returns accuracy/precision/recall/F1."""
+    model.eval()
+    tp = fp = fn = tn = 0
+    with torch.no_grad():
+        for imgs, labels, _ in loader:
+            imgs = imgs.to(device(), non_blocking=True)
+            labels = labels.to(device(), non_blocking=True)
+            preds = model(imgs).argmax(dim=1)
+            for p, l in zip(preds.cpu().tolist(), labels.cpu().tolist()):
+                if p == positive_idx and l == positive_idx:
+                    tp += 1
+                elif p == positive_idx and l != positive_idx:
+                    fp += 1
+                elif p != positive_idx and l == positive_idx:
+                    fn += 1
+                else:
+                    tn += 1
+    n = tp + fp + fn + tn
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    accuracy = (tp + tn) / n if n else 0.0
+    return {"accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1}
+
+
+def train(args):
+    cfg = load_config(args.config)
+    train_run(cfg)
 
 
 def collect_predictions(
@@ -231,16 +280,18 @@ def validate_checkpoint_compatibility(ckpt: Dict, cfg: Dict, class_names: List[s
     return True
 
 
-def evaluate(args):
-    cfg = load_config(args.config)
-    loaders, class_names = build_dataloaders_from_config(cfg, splits=[args.split])
-    if args.split not in loaders:
-        rprint(f"[red]No data found for split '{args.split}'.[/red]")
-        return
+def evaluate_run(
+    cfg: Dict, checkpoint: str, split: str = "test", output: Optional[str] = None
+) -> Optional[Dict]:
+    """Evaluate a checkpoint against a configured split. Returns metrics dict."""
+    loaders, class_names = build_dataloaders_from_config(cfg, splits=[split])
+    if split not in loaders:
+        rprint(f"[red]No data found for split '{split}'.[/red]")
+        return None
 
-    ckpt = torch.load(args.checkpoint, map_location=device())
+    ckpt = torch.load(checkpoint, map_location=device())
     if not validate_checkpoint_compatibility(ckpt, cfg, class_names):
-        return
+        return None
 
     model = prepare_model(cfg, num_classes=len(class_names))
 
@@ -253,7 +304,7 @@ def evaluate(args):
         model.load_state_dict(ckpt["model_state"], strict=False)
 
     positive_idx = resolve_positive_class_index(class_names, cfg)
-    rows = collect_predictions(model, loaders[args.split], class_names, positive_idx)
+    rows = collect_predictions(model, loaders[split], class_names, positive_idx)
 
     # basic metrics (precision/recall/F1) for interpretability
     y_true = [class_names.index(r["true_label"]) for r in rows]
@@ -261,14 +312,33 @@ def evaluate(args):
     tp = sum(1 for yt, yp in zip(y_true, y_pred) if yt == yp == positive_idx)
     fp = sum(1 for yt, yp in zip(y_true, y_pred) if yt != positive_idx and yp == positive_idx)
     fn = sum(1 for yt, yp in zip(y_true, y_pred) if yt == positive_idx and yp != positive_idx)
+    tn = len(rows) - tp - fp - fn
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    accuracy = (tp + tn) / len(rows) if rows else 0.0
     rprint(f"[bold]Precision:[/bold] {precision:.3f}  [bold]Recall:[/bold] {recall:.3f}  [bold]F1:[/bold] {f1:.3f}")
 
-    output_csv = args.output or cfg["output"].get("inference_csv", "outputs/predictions.csv")
+    output_csv = output or cfg["output"].get("inference_csv", "outputs/predictions.csv")
     save_csv(rows, output_csv)
     rprint(f"[green]Saved per-image predictions to[/green] {output_csv}")
+
+    return {
+        "n": len(rows),
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+    }
+
+
+def evaluate(args):
+    cfg = load_config(args.config)
+    evaluate_run(cfg, args.checkpoint, split=args.split, output=args.output)
 
 
 def infer(args):

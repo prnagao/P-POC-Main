@@ -112,13 +112,15 @@ class SlideCropDataset(Dataset):
         class_names: List[str],
         img_size: int,
         split: str,
+        augment: bool = True,
     ):
         self.root = Path(data_root)
         self.class_names = class_names
         self.split = split
 
-        # IMPORTANT: train-only augmentation happens here
-        if split == "train":
+        # Augmentation only applies to the train split. The `augment` flag lets a
+        # caller turn it off (e.g. for "no-aug" ablations) without changing split.
+        if split == "train" and augment:
             self.transform = make_train_transform(img_size)
         else:
             self.transform = make_eval_transform(img_size)
@@ -161,6 +163,8 @@ def build_dataloaders_from_config(
 ) -> Tuple[Dict[str, DataLoader], List[str]]:
     data_cfg = cfg["data"]
     class_names = data_cfg["class_names"]
+    # Default True preserves the previous always-augment-train behavior.
+    augment = bool(data_cfg.get("augment", True))
     loaders: Dict[str, DataLoader] = {}
 
     for split in splits:
@@ -171,6 +175,7 @@ def build_dataloaders_from_config(
             class_names=class_names,
             img_size=data_cfg["img_size"],
             split=split,
+            augment=augment,
         )
         if len(dataset) == 0:
             continue
