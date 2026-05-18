@@ -1,0 +1,26 @@
+{
+  // Use the repo-local virtualenv if it exists. If not, VS Code will prompt
+  // you to pick an interpreter the first time you run something.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+
+  // Hide noise from the file explorer so the experiment surface stays readable.
+  // These are also gitignored, so they only show up when present locally.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    ".venv": true,
+    "dataset_unused": true,
+    "outputs/lopo": false
+  },
+
+  // Speed up file watching by ignoring the same heavy dirs.
+  "files.watcherExclude": {
+    "**/__pycache__/**": true,
+    "**/.venv/**": true,
+    "**/dataset_unused/**": true,
+    "**/outputs/lopo/**": true
+  },
+
+  // Terminal opens in the workspace root so relative paths in our scripts work.
+  "terminal.integrated.cwd": "${workspaceFolder}"
+}

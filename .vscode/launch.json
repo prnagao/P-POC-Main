@@ -1,0 +1,96 @@
+{
+  // Preset run configurations for the pathology POC pipeline.
+  // Open the Run & Debug panel (Ctrl+Shift+D), pick one, hit F5.
+  // The "integratedTerminal" console keeps tqdm progress bars readable.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "1. Balance slides (dry-run)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/dataset/balance_slides.py",
+      "args": [
+        "-i", "${input:rawSlidesDir}",
+        "-o", "dataset",
+        "--n-per-class", "100",
+        "--dry-run"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "2. Balance slides (commit)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/dataset/balance_slides.py",
+      "args": [
+        "-i", "${input:rawSlidesDir}",
+        "-o", "dataset",
+        "--n-per-class", "100"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "3. Run LOPO (smoke: linear_aug, slide_s5)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/run_lopo.py",
+      "args": [
+        "--conditions", "linear_aug",
+        "--slides", "slide_s5"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "4. Run LOPO (full sweep)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/run_lopo.py",
+      "args": [],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "5. Score LOPO (post-hoc PR + thresholds)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/score_lopo.py",
+      "args": [],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "6. External NIH validation",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/run_external_nih.py",
+      "args": [
+        "--nih-root", "${input:nihRoot}"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "rawSlidesDir",
+      "type": "promptString",
+      "description": "Absolute path to raw slide folders (each containing Positives/ and Negatives/)",
+      "default": "C:\\Users\\nagao\\Documents\\GitHub\\P-POC-Main\\dataset"
+    },
+    {
+      "id": "nihRoot",
+      "type": "promptString",
+      "description": "Path to NIH cell_images directory (containing Parasitized/ and Uninfected/)",
+      "default": ""
+    }
+  ]
+}
