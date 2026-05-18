@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 from src.pathology_poc.cli import (
     load_config,
@@ -239,17 +240,48 @@ def main():
                     for c, folds in ckpt_map.items()}
 
     total = sum(len(folds) for folds in ckpt_map.values())
-    print(f"Found {total} checkpoint(s) across {len(ckpt_map)} condition(s)\n")
+    print(f"Found {total} checkpoint(s) across {len(ckpt_map)} condition(s)")
 
     out_root = Path(args.output_root).resolve()
     out_root.mkdir(parents=True, exist_ok=True)
 
-    per_ckpt_rows = []
-    # cond -> list of per-image prob arrays, one per fold; aligned by sample index.
-    per_cond_probs = defaultdict(list)
-    file_paths_ref = None
-    true_labels_ref = None
+    # -------- Phase 1: cache backbone features (one pass) --------
+    # The DINOv2 backbone is frozen and identical across all 16 checkpoints,
+    # so we extract features once and reuse them. This turns N x dataset
+    # backbone-forwards into 1 x dataset backbone-forward + N x cheap head.
+    print("\nPhase 1: caching backbone features (one pass over the dataset)...")
+    first_cond, first_folds = next(iter(ckpt_map.items()))
+    first_fold_name, first_ckpt_path = next(iter(first_folds.items()))
+    first_ckpt = torch.load(first_ckpt_path, map_location=device())
+    embed_cfg = dict(base_cfg)
+    embed_cfg["model"] = (first_ckpt.get("cfg") or base_cfg).get("model", base_cfg["model"])
+    embedder = prepare_model(embed_cfg, num_classes=len(class_names))
+    embedder.eval()
 
+    feat_chunks = []
+    all_labels = []
+    all_paths = []
+    with torch.no_grad():
+        for imgs, labels, meta in tqdm(loader, desc="  Embedding", unit="batch"):
+            feats = embedder.backbone(imgs.to(device(), non_blocking=True))
+            if isinstance(feats, (list, tuple)):
+                feats = feats[0]
+            feat_chunks.append(feats.cpu())
+            all_labels.extend(int(l) for l in labels)
+            all_paths.extend(meta["filepath"])
+    cached_feats = torch.cat(feat_chunks, dim=0)
+    del feat_chunks, embedder
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print(f"  cached features: {tuple(cached_feats.shape)} (~{cached_feats.numel() * 4 / 1e6:.1f} MB)")
+
+    per_ckpt_rows = []
+    per_cond_probs = defaultdict(list)
+    file_paths_ref = all_paths
+    true_labels_ref = all_labels
+
+    # -------- Phase 2: per-checkpoint head-only inference on cached features --------
+    print("\nPhase 2: applying each checkpoint's head to the cached features...")
     run_idx = 0
     for cond_name, fold_map in ckpt_map.items():
         for fold_name, ckpt_path in fold_map.items():
@@ -259,8 +291,6 @@ def main():
 
             ckpt = torch.load(ckpt_path, map_location=device())
             ckpt_cfg = ckpt.get("cfg") or base_cfg
-            # The ckpt's stored cfg carries model.mode (linear/adapter), adapter
-            # hyperparams, backbone choice -- everything prepare_model needs.
             inference_cfg = dict(base_cfg)
             inference_cfg["model"] = ckpt_cfg.get("model", base_cfg["model"])
 
@@ -272,17 +302,19 @@ def main():
                 model.load_state_dict(ckpt["model_state"], strict=False)
             model.eval()
 
+            # Feed cached features past the backbone. AdapterClassifier has an
+            # extra adapter module before the head; DinoV2Classifier has only
+            # the head.
             all_probs = []
-            all_labels = []
-            all_paths = []
+            chunk_size = 1024
             with torch.no_grad():
-                for imgs, labels, meta in loader:
-                    logits = model(imgs.to(device(), non_blocking=True))
+                for i in range(0, cached_feats.shape[0], chunk_size):
+                    f = cached_feats[i:i + chunk_size].to(device())
+                    if hasattr(model, "adapter"):
+                        f = model.adapter(f)
+                    logits = model.head(f)
                     probs = torch.softmax(logits, dim=1).cpu()
-                    pos = probs[:, positive_idx]
-                    all_probs.extend(float(p) for p in pos)
-                    all_labels.extend(int(l) for l in labels)
-                    all_paths.extend(meta["filepath"])
+                    all_probs.extend(float(p) for p in probs[:, positive_idx])
 
             m = metrics_from_probs(all_probs, all_labels, positive_idx, args.threshold)
             print(f"  n={m['n']}  acc={m['accuracy']:.3f}  "
@@ -303,11 +335,6 @@ def main():
             })
             per_cond_probs[cond_name].append(all_probs)
 
-            if file_paths_ref is None:
-                file_paths_ref = all_paths
-                true_labels_ref = all_labels
-
-            # Free the model before the next fold's backbone loads.
             del model
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
