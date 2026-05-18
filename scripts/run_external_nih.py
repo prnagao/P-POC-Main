@@ -165,8 +165,15 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--nih-root", required=True,
-                    help="Directory containing Parasitized/ and Uninfected/ subfolders")
+    ap.add_argument("--nih-root", default=None,
+                    help="Directory containing Parasitized/ and Uninfected/ subfolders. "
+                         "Mutually exclusive with --kaggle.")
+    ap.add_argument("--kaggle", action="store_true",
+                    help="Auto-download the dataset via kagglehub. Requires "
+                         "`pip install kagglehub` and a Kaggle API token at "
+                         "~/.kaggle/kaggle.json (Account -> Create New API Token).")
+    ap.add_argument("--kaggle-slug", default="iarunava/cell-images-for-detecting-malaria",
+                    help="Kaggle dataset slug (only used with --kaggle).")
     ap.add_argument("--pos-folder", default="Parasitized",
                     help="Folder mapped to the positive class (default: Parasitized)")
     ap.add_argument("--neg-folder", default="Uninfected",
@@ -192,9 +199,29 @@ def main():
     folder_map = {class_names[positive_idx]: args.pos_folder,
                   class_names[1 - positive_idx]: args.neg_folder}
 
+    if args.kaggle and args.nih_root:
+        ap.error("--kaggle and --nih-root are mutually exclusive")
+    if not args.kaggle and not args.nih_root:
+        ap.error("Provide either --nih-root or --kaggle")
+
+    if args.kaggle:
+        try:
+            import kagglehub
+        except ImportError:
+            ap.error("kagglehub not installed. Run: pip install kagglehub")
+        print(f"Downloading via kagglehub: {args.kaggle_slug}")
+        downloaded = Path(kagglehub.dataset_download(args.kaggle_slug))
+        # The iarunava archive expands to <root>/cell_images/{Parasitized,Uninfected}/,
+        # but other slugs may put the class folders directly at <root>. Auto-detect.
+        candidate = downloaded / "cell_images"
+        nih_root = candidate if candidate.exists() else downloaded
+        print(f"  -> {nih_root}")
+    else:
+        nih_root = args.nih_root
+
     print(f"Class mapping: {folder_map}")
-    print(f"Loading NIH images from: {args.nih_root}")
-    dataset = LabeledFolderDataset(args.nih_root, folder_map, class_names, img_size)
+    print(f"Loading NIH images from: {nih_root}")
+    dataset = LabeledFolderDataset(nih_root, folder_map, class_names, img_size)
     print(f"  -> {len(dataset)} images")
 
     loader = DataLoader(

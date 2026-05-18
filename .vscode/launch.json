@@ -67,12 +67,24 @@
       "justMyCode": true
     },
     {
-      "name": "6. External NIH validation",
+      "name": "6. External NIH validation (local path)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/scripts/run_external_nih.py",
       "args": [
         "--nih-root", "${input:nihRoot}"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
+      "name": "7. External NIH validation (via kagglehub)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/run_external_nih.py",
+      "args": [
+        "--kaggle"
       ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
